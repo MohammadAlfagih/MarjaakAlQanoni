@@ -1,0 +1,208 @@
+# Marjaak AlQanoni API — Qwen + RAG
+
+The same Python backend runs on a local machine or a Colab GPU. No project
+notebooks are required. The frontend keeps its existing JSON requests.
+
+```text
+Frontend POST /chat → retrieve law + selected-company policy evidence → Qwen chat template → generate
+→ validate JSON + evidence labels → frontend ChatResponse
+```
+
+## Local run
+
+From the repository root, with the virtual environment activated:
+
+```powershell
+python -m pip install -r apps/api/requirements.txt
+python app.py --build-index --preload
+```
+
+`--build-index` builds the E5/Chroma law index, or reuses a matching complete
+index. It refuses to overwrite a stale/incomplete index; see `services/RAG/README.md`.
+`--preload` loads Qwen before accepting requests. Without it, Qwen loads on the
+first nonempty-evidence chat request. Downloads happen only when the cache is
+missing. These are two separate models: E5 retrieves; Qwen generates the answer.
+
+Open `http://127.0.0.1:8000/docs`. `GET /health` reports whether Qwen is loaded;
+it is a process health check, not an evaluation of retrieval or answer accuracy.
+
+GPU is selected automatically when supported by the installed PyTorch build.
+GPU inference uses float16; CPU uses float32 and needs considerably more RAM
+and time. Install a CUDA-enabled PyTorch build on a workstation with an NVIDIA
+GPU. `LLM_DEVICE=cpu` or `LLM_DEVICE=cuda` can override automatic placement.
+Use one server worker to avoid loading multiple copies of the model.
+
+## Colab: upload Python files, then run app.py
+
+Select a GPU runtime (for example T4). Upload **root `app.py` plus the entire
+`apps/api/` folder**, including the law PDF and companies.json, preserving paths.
+Uploading just the inner `apps/api/app/app.py` is insufficient because it imports
+the RAG and LLM services.
+
+For an easy upload, make a backend-only source ZIP locally:
+
+```powershell
+python scripts/package_api.py
+```
+
+This creates `tmp/marjaak-api.zip`, with no model caches, vector database,
+virtual environment, credentials or frontend dependencies. Upload that ZIP
+using Colab's Files panel. Then use the following setup commands in Colab cells;
+the application itself remains ordinary `.py` files.
+
+```python
+from pathlib import Path
+import os, zipfile
+
+root = Path('/content/marjaak-api')
+root.mkdir(exist_ok=True)
+with zipfile.ZipFile('/content/marjaak-api.zip') as archive:
+    for member in archive.infolist():
+        if not (root / member.filename).resolve().is_relative_to(root.resolve()):
+            raise ValueError('Invalid archive path')
+    archive.extractall(root)
+os.chdir(root)
+```
+
+Install the backend dependencies while preserving Colab's installed CUDA PyTorch:
+
+```python
+import subprocess, sys, torch
+assert torch.cuda.is_available(), 'Select a GPU runtime first'
+dependencies = [
+    line.strip()
+    for line in Path('apps/api/requirements.txt').read_text().splitlines()
+    if line.strip() and not line.startswith(('#', 'torch=='))
+]
+subprocess.check_call([sys.executable, '-m', 'pip', 'install', *dependencies, 'pyngrok'])
+```
+
+Start the API in a background process so you can open the tunnel in another cell:
+
+```python
+log = open('/content/marjaak-api.log', 'w')
+server = subprocess.Popen(
+    [sys.executable, 'app.py', '--build-index', '--preload'],
+    stdout=log, stderr=subprocess.STDOUT,
+)
+print('Server PID:', server.pid)
+```
+
+The first run builds the law index and downloads `Qwen/Qwen2.5-3B-Instruct`.
+It can take several minutes. Check the log in another cell:
+
+```python
+print(Path('/content/marjaak-api.log').read_text()[-5000:])
+```
+
+After the log says `Uvicorn running`, confirm local availability:
+
+```python
+import requests
+print(requests.get('http://127.0.0.1:8000/health', timeout=10).json())
+```
+
+Create an HTTPS tunnel using your own ngrok account token. Enter it privately;
+do not put the token in source files:
+
+```python
+from getpass import getpass
+from pyngrok import ngrok
+
+ngrok.set_auth_token(getpass('ngrok authtoken: '))
+tunnel = ngrok.connect(8000, 'http')
+print('VITE_API_URL=' + tunnel.public_url)
+```
+
+The tunnel and server live only while the Colab runtime stays active. Recreating
+the tunnel may change the URL. Stop it when finished:
+
+```python
+ngrok.disconnect(tunnel.public_url)
+server.terminate()
+server.wait(timeout=30)
+log.close()
+```
+
+## Connect the frontend
+
+Create `apps/FrontEnd/.env` from `.env.example` and set:
+
+```dotenv
+VITE_USE_MOCK=false
+VITE_API_URL=http://localhost:8000
+```
+
+For Colab, replace only `VITE_API_URL` with the printed HTTPS tunnel URL. Do not
+append `/chat` or `/docs`. Restart Vite after changing `.env`.
+
+CORS allows `http://localhost:5173` and `http://127.0.0.1:5173` by default.
+Set `FRONTEND_ORIGINS` to comma-separated frontend origins if using other ports
+or a hosted frontend; these are frontend URLs, not the backend tunnel URL.
+The API client adds ngrok's warning-bypass header for ngrok URLs so browser
+requests receive JSON rather than an HTML interstitial.
+
+## Implemented API contract
+
+- `GET /companies`: demo company choices from `companies.json` (same IDs as the UI).
+- `GET /policies?company_id=...`: list that company's saved policy files.
+- `POST /policies`: save and index one PDF, DOCX or UTF-8 TXT policy.
+- `DELETE /policies/{id}`: remove the saved file and its cached vectors.
+- `POST /chat`: existing frontend request fields: `question`, `role`,
+  `company_id`, `lang`, `history`.
+- Response: `answer`, `articles`, `next_steps`, `conflict`, `status`, `lang`.
+- Existing `POST /rag/search` remains available for evidence-only retrieval
+  with an optional request-local policy PDF.
+- `GET /health`: model ID and in-process loading status.
+
+Policy files and metadata are persisted in `apps/api/.data/policies.sqlite3` by
+default. Policy vectors are not persisted: each upload is embedded once and added
+to an `InMemoryVectorStore` for its company. After a server restart, the saved
+files remain and each company's vector store is rebuilt lazily on that company's
+first chat request. Set `POLICIES_DATA_DIR` to move the on-disk SQLite database.
+For Colab, that default directory disappears with the runtime unless you copy it
+to persistent storage before shutdown and restore it before startup.
+
+PDF references use page numbers; DOCX references use paragraph/table positions;
+TXT references use source line numbers. Text-based PDF is supported up to 40
+pages. Scanned PDFs need OCR, which is not implemented. All uploads are limited
+to 10,000,000 bytes; expanded DOCX content is also bounded. Exact duplicate
+content within one company returns the existing policy record.
+
+`/chat` searches only the selected company's in-memory store and can return both
+law (`L`) and policy (`P`) evidence. A generated conflict is accepted only when
+the model cites at least one retrieved law source and one retrieved policy source.
+The company/role values are demo selections, not authenticated authorization.
+Speech recognition `/voice` remains unimplemented. This is a development/demo server.
+
+History accepts frontend assistant `status` fields, including `clarify`. Recent
+user messages help retrieval understand follow-ups; the latest eight history
+messages (up to 2000 characters each) are passed as data to the model. User
+history cannot supply system-role messages.
+
+The model returns internal JSON with evidence labels, not source quotations.
+The server validates it, rejects unknown references and uncited `answered`
+responses, and constructs article names, page references and quotes from RAG's
+original sources. This guards the reference structure; it does **not** prove that
+every generated statement is legally correct or supported by its citation.
+
+`422` means invalid input or an oversized prompt, `503` means unavailable
+index/model/storage, and `502` means malformed/unsupported model output.
+
+## Verification
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Tests exercise the frontend contract, history, CORS, source integrity, error
+handling and generation token slicing without downloading Qwen. For real model
+verification on your GPU, submit a question to `/chat` in `/docs`, then test the
+same flow through the frontend. The existing opt-in E5 tests remain documented
+in `services/RAG/README.md`.
+
+Implementation follows the lab's `AutoTokenizer` + `AutoModelForCausalLM` +
+`apply_chat_template` + `generate` approach, using the requested 3B Instruct model:
+[Qwen model card](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct),
+[Hugging Face chat templates](https://huggingface.co/docs/transformers/v5.19.0/en/chat_templating),
+[ngrok browser interstitial](https://ngrok.com/docs/errors/err_ngrok_6024).

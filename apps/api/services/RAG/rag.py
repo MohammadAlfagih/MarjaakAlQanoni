@@ -427,12 +427,33 @@ def build_index() -> None:
 # ==================================================
 
 
-def retrieve(question: str, policy_pdf: bytes | None = None) -> dict:
+def citation_location(metadata: dict, lang: str = "en") -> str:
+    kind = metadata.get("location_kind", "page")
+    labels = {
+        "page": ("صفحة PDF", "PDF page"),
+        "line": ("الأسطر", "lines"),
+        "paragraph": ("الفقرة", "paragraph"),
+        "table": ("الجدول", "table"),
+    }
+    label = labels[kind][0 if lang == "ar" else 1]
+    if kind == "page":
+        start, end = metadata["page_start"], metadata["page_end"]
+    else:
+        start, end = metadata["location_start"], metadata["location_end"]
+    return f"{label} {start}-{end}"
+
+
+def retrieve(
+    question: str, policy_pdf: bytes | None = None,
+    *, policy_documents: list[Document] | None = None,
+) -> dict:
 
     question = question.strip()
     if not 0 < len(question) <= 2000:
         raise ValueError("Question must be 1-2000 characters")
 
+    if policy_pdf is not None and policy_documents is not None:
+        raise ValueError("Supply either a policy PDF or already retrieved policy documents")
     # Validate uploads before loading the model or searching the permanent index.
     policy_chunks = extract_policy(policy_pdf) if policy_pdf is not None else []
     manifest = check_index()
@@ -450,7 +471,8 @@ def retrieve(question: str, policy_pdf: bytes | None = None) -> dict:
     # Retrieve from persistent law database
     law_docs = database.similarity_search(law_query(question), k=5, filter=filter_by)
 
-    policy_docs = []
+    # /chat supplies results from its cached per-company store, with no re-embedding.
+    policy_docs = list(policy_documents or [])
 
     # Optional company policy: request-local only
     if policy_chunks:
@@ -473,9 +495,7 @@ def retrieve(question: str, policy_pdf: bytes | None = None) -> dict:
             evidence.append(
                 f"[{tag}] "
                 f"{doc.metadata['article']} "
-                f"(PDF page "
-                f"{doc.metadata['page_start']}-"
-                f"{doc.metadata['page_end']})\n"
+                f"({citation_location(doc.metadata)})\n"
                 f"{doc.page_content}"
             )
 

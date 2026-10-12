@@ -222,4 +222,7 @@ __marimo__/
 # Generated RAG index and downloaded embedding model
 apps/api/services/RAG/chroma_e5_db/
 apps/api/services/RAG/.model_cache/
+apps/api/services/llm/.model_cache/
+apps/api/services/llm/.offload/
+apps/api/.data/
 tmp/

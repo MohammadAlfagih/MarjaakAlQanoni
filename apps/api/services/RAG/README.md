@@ -2,7 +2,13 @@
 
 This service retrieves evidence from the shared Saudi Labor Law PDF and an
 optional uploaded company-policy PDF. It returns `context` and `sources` for
-the existing LLM service; it does not generate answers or decide compliance.
+the Qwen LLM service; this retrieval endpoint does not generate answers or decide
+compliance. The frontend-compatible `POST /chat` integration and local/Colab
+setup are documented in [the API README](../../README.md).
+
+`POST /rag/search` keeps its original request-local PDF behavior. Persistent
+company uploads and their per-company in-memory vector stores are handled by
+`services/policies/` and supplied to `retrieve()` as already-retrieved documents.
 
 ## Setup and run
 

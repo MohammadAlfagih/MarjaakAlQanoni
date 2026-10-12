@@ -3,7 +3,7 @@ import { useApp } from "../context/AppContext";
 import { deletePolicy, getPolicies, uploadPolicy } from "../api/client";
 import { TrashIcon, UploadIcon } from "../components/Icons";
 
-const MAX_BYTES = 10 * 1024 * 1024;
+const MAX_BYTES = 10_000_000;
 const ALLOWED = [".pdf", ".docx", ".txt"];
 
 const ext = (name) => name.slice(name.lastIndexOf(".")).toLowerCase();
@@ -31,7 +31,7 @@ export default function Policies() {
       setPending((p) => [tmp, ...p]);
       try {
         const saved = await uploadPolicy(session.company_id, file);
-        setFiles((f) => [saved, ...(f || [])]);
+        setFiles((f) => [saved, ...(f || []).filter((existing) => existing.id !== saved.id)]);
       } catch {
         setError(`${file.name}: ${t.errorGeneric}`);
       } finally {

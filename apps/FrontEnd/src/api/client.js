@@ -11,7 +11,14 @@ const BASE = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/
 export const isMock = USE_MOCK;
 
 async function request(path, options = {}) {
-  const res = await fetch(BASE + path, options);
+  // ngrok's free tunnel otherwise serves an HTML warning for browser requests.
+  const tunnelHeaders = /^https:\/\/[^/]+\.ngrok(?:-free)?\.(?:app|dev|io)(?:\/|$)/.test(BASE)
+    ? { "ngrok-skip-browser-warning": "1" }
+    : {};
+  const res = await fetch(BASE + path, {
+    ...options,
+    headers: { ...tunnelHeaders, ...options.headers },
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`${res.status} ${text}`.trim());

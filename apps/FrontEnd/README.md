@@ -28,6 +28,12 @@ VITE_API_URL=http://localhost:8000
 
 Then restart `npm run dev`. The backend must allow CORS from `http://localhost:5173`.
 
+The Qwen/RAG text-chat backend can now run locally or in Colab using the same
+Python files. See [backend setup](../api/README.md). For Colab, use the HTTPS
+tunnel URL as `VITE_API_URL`; keep the request functions below unchanged.
+The real backend supports companies, text chat and PDF/DOCX/TXT company-policy
+management. Voice remains to be implemented.
+
 ## Where things are
 
 ```
