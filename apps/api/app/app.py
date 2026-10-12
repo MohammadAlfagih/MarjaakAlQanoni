@@ -40,7 +40,7 @@ app.include_router(policy_router)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_NAME, "llm_loaded": is_loaded()}
+    return {"status": "ok", "model": MODEL_NAME, "llm_loaded": is_loaded(), "pid": os.getpid()}
 
 
 @app.get("/companies")

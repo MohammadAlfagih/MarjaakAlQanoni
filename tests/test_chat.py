@@ -100,11 +100,43 @@ class ChatTests(unittest.TestCase):
             self.assertTrue(result.json()["conflict"])
             self.assertEqual(result.json()["articles"][1]["quote"], "Original policy text")
             self.assertIn("paragraph 2-2", result.json()["articles"][1]["ref"])
+            prompt = json.loads(get_client.return_value.ask.call_args.args[1])
+            self.assertEqual(prompt["company_policy_evidence"], [combined["sources"][1]])
+            self.assertEqual(prompt["labor_law_evidence"], [combined["sources"][0]])
             for changes in ({"evidence_refs": ["P1"]}, {"status": "clarify"}, {"status": "unknown"}):
                 get_client.return_value.ask.return_value = model_answer(
                     **{"conflict": True, "evidence_refs": ["L1", "P1"], **changes}
                 )
                 self.assertEqual(self.http.post("/chat", json=self.payload).status_code, 502)
+
+    def test_evidence_endpoint_returns_retrieval_before_model_citation_selection(self):
+        combined = evidence()
+        combined["sources"].append({
+            "ref": "P1", "kind": "policy", "article": "leave.txt", "text": "Policy text",
+            "location_kind": "line", "location_start": 1, "location_end": 1,
+        })
+        with patch.object(chat.rag, "retrieve", return_value=combined), \
+             patch.object(chat, "get_client") as get_client:
+            result = self.http.post("/chat/evidence", json=self.payload)
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.json()["sources"], combined["sources"])
+            self.policies.search.assert_called_once_with("c_101", self.payload["question"])
+            get_client.assert_not_called()
+
+            # A model's selected citations need not include every retrieved source.
+            get_client.return_value.ask.return_value = model_answer(evidence_refs=["L1"])
+            result = self.http.post("/chat", json=self.payload)
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual([a["source"] for a in result.json()["articles"]], ["law"])
+            prompt = json.loads(get_client.return_value.ask.call_args.args[1])
+            self.assertEqual(prompt["company_policy_evidence"][0]["ref"], "P1")
+
+    def test_evidence_endpoint_rejects_unknown_company_without_loading_model(self):
+        self.policies.search.side_effect = chat.UnknownCompany("Company not found")
+        with patch.object(chat, "get_client") as get_client:
+            response = self.http.post("/chat/evidence", json=self.payload)
+            self.assertEqual(response.status_code, 404)
+            get_client.assert_not_called()
 
     def test_invalid_questions_and_system_history_rejected(self):
         for changes in (

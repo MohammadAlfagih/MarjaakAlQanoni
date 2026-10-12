@@ -161,22 +161,35 @@ class PolicyLifecycleTests(unittest.TestCase):
                  patch.object(chat.rag, "check_index", return_value={"chunks": 0}), \
                  patch.object(chat.rag, "store", return_value=law_store), \
                  patch.object(chat, "get_client", return_value=qwen):
-                prompts = []
-                responses = []
-                for role in ("hr", "employee"):
-                    response = http.post("/chat", json={
-                        "question": "كم استحق اجازة سنوية في شركتي",
-                        "company_id": "c_101", "role": role, "lang": "ar", "history": [],
-                    })
-                    self.assertEqual(response.status_code, 200, response.text)
-                    responses.append(response.json())
-                    prompt = json.loads(qwen.ask.call_args.args[1])
-                    self.assertNotIn("audience", prompt)
-                    self.assertIn("Company annual leave: 25 paid days.", prompt["retrieved_evidence"])
-                    prompts.append(prompt)
-                self.assertEqual(prompts[0], prompts[1])
-                self.assertEqual(responses[0]["articles"], responses[1]["articles"])
-                self.assertEqual(responses[1]["articles"][0]["source"], "policy")
+                for question in ("كم استحق اجازة سنوية في شركتي", "كم يوم إجازتي السنوية؟"):
+                    prompts = []
+                    responses = []
+                    for role in ("hr", "employee"):
+                        payload = {
+                            "question": question, "company_id": "c_101",
+                            "role": role, "lang": "ar", "history": [],
+                        }
+                        response = http.post("/chat", json=payload)
+                        self.assertEqual(response.status_code, 200, response.text)
+                        responses.append(response.json())
+                        prompt = json.loads(qwen.ask.call_args.args[1])
+                        self.assertNotIn("audience", prompt)
+                        policies_sent = prompt["company_policy_evidence"]
+                        self.assertEqual(policies_sent[0]["text"], "Company annual leave: 25 paid days.")
+                        self.assertEqual(policies_sent[0]["company_id"], "c_101")
+                        self.assertEqual(prompt["labor_law_evidence"], [])
+                        prompts.append(prompt)
+
+                        calls = qwen.ask.call_count
+                        retrieved = http.post("/chat/evidence", json=payload)
+                        self.assertEqual(retrieved.status_code, 200, retrieved.text)
+                        self.assertEqual(retrieved.json()["sources"], policies_sent)
+                        self.assertEqual(retrieved.json()["query"], question)
+                        self.assertEqual(retrieved.json()["company_id"], "c_101")
+                        self.assertEqual(qwen.ask.call_count, calls)
+                    self.assertEqual(prompts[0], prompts[1])
+                    self.assertEqual(responses[0]["articles"], responses[1]["articles"])
+                    self.assertEqual(responses[1]["articles"][0]["source"], "policy")
 
                 calls = qwen.ask.call_count
                 other_company = http.post("/chat", json={
