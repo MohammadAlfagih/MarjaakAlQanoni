@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Generated RAG index and downloaded embedding model
+apps/api/services/RAG/chroma_e5_db/
+apps/api/services/RAG/.model_cache/
+tmp/
