@@ -6,11 +6,11 @@ import Login from "./pages/Login";
 import Chat from "./pages/Chat";
 import Policies from "./pages/Policies";
 
-// Only logged-in users (and only HR for /policies) can open these pages.
+// Policy management requires an HR session with a selected company.
 function Guard({ children, hrOnly = false }) {
   const { session } = useApp();
   if (!session) return <Navigate to="/login" replace />;
-  if (hrOnly && session.role !== "hr") return <Navigate to="/chat" replace />;
+  if (hrOnly && (session.role !== "hr" || !session.company_id)) return <Navigate to="/chat" replace />;
   return children;
 }
 

@@ -16,7 +16,7 @@ export default function Header() {
       {session && (
         <nav className="nav">
           <NavLink to="/chat">{t.navChat}</NavLink>
-          {session.role === "hr" && <NavLink to="/policies">{t.navPolicies}</NavLink>}
+          {session.role === "hr" && session.company_id && <NavLink to="/policies">{t.navPolicies}</NavLink>}
         </nav>
       )}
 
@@ -25,7 +25,7 @@ export default function Header() {
         {session && (
           <div className="who">
             <strong>{session.name || (session.role === "hr" ? t.roleHr : t.roleEmployee)}</strong>
-            {session.company_name}
+            {session.company_name || t.lawOnly}
           </div>
         )}
         <button className="btn btn-ghost" onClick={toggleLang}>{t.switchLang}</button>

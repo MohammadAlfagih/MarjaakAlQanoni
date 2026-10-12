@@ -86,6 +86,91 @@ class ChatTests(unittest.TestCase):
             self.policies.search.assert_called_once_with("c_101", self.payload["question"])
             self.assertIs(retrieve.call_args.kwargs["policy_documents"], docs)
 
+    def test_no_company_is_law_only_for_both_roles_and_both_endpoints(self):
+        for role in ("employee", "hr"):
+            for company_fields in ({}, {"company_id": None}, {"company_id": ""}, {"company_id": "  "}):
+                for endpoint in ("/chat", "/chat/evidence"):
+                    with self.subTest(role=role, company=company_fields, endpoint=endpoint), \
+                         patch.object(chat.rag, "retrieve", return_value=evidence()) as retrieve, \
+                         patch.object(chat, "get_client") as get_client:
+                        self.policies.reset_mock()
+                        payload = {k: v for k, v in self.payload.items() if k != "company_id"}
+                        payload.update(role=role, **company_fields)
+                        get_client.return_value.ask.return_value = model_answer()
+                        response = self.http.post(endpoint, json=payload)
+                        self.assertEqual(response.status_code, 200, response.text)
+                        self.policies.search.assert_not_called()
+                        retrieve.assert_called_once_with(payload["question"], policy_documents=[])
+                        if endpoint == "/chat":
+                            self.assertEqual(response.json()["articles"][0]["source"], "law")
+                            prompt = json.loads(get_client.return_value.ask.call_args.args[1])
+                            self.assertIsNone(prompt["company_id"])
+                            self.assertEqual(prompt["company_policy_evidence"], [])
+                            self.assertEqual(prompt["labor_law_evidence"], evidence()["sources"])
+                            self.assertEqual(get_client.return_value.ask.call_count, 1)
+                        else:
+                            self.assertEqual(response.json()["sources"], evidence()["sources"])
+                            get_client.assert_not_called()
+
+    def test_valid_company_without_policies_still_answers_from_law(self):
+        self.payload["company_id"] = "c_103"
+        with patch.object(chat.rag, "retrieve", return_value=evidence()) as retrieve, \
+             patch.object(chat, "get_client") as get_client:
+            get_client.return_value.ask.return_value = model_answer()
+            result = self.http.post("/chat", json=self.payload)
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.json()["articles"][0]["source"], "law")
+            self.policies.search.assert_called_once_with("c_103", self.payload["question"])
+            retrieve.assert_called_once_with(self.payload["question"], policy_documents=[])
+
+    def test_one_review_recovers_either_omitted_evidence_group(self):
+        combined = evidence()
+        combined["sources"].append({
+            "ref": "P1", "kind": "policy", "article": "leave.txt", "text": "Policy text",
+            "location_kind": "line", "location_start": 1, "location_end": 1,
+        })
+        for first_ref in ("P1", "L1"):
+            with self.subTest(first_ref=first_ref), \
+                 patch.object(chat.rag, "retrieve", return_value=combined), \
+                 patch.object(chat, "get_client") as get_client:
+                get_client.return_value.ask.side_effect = [
+                    model_answer(evidence_refs=[first_ref]),
+                    model_answer(evidence_refs=["L1", "P1"]),
+                ]
+                result = self.http.post("/chat", json=self.payload)
+                self.assertEqual(result.status_code, 200, result.text)
+                self.assertEqual({a["source"] for a in result.json()["articles"]}, {"law", "policy"})
+                self.assertEqual(get_client.return_value.ask.call_count, 2)
+                prompts = [json.loads(call.args[1]) for call in get_client.return_value.ask.call_args_list]
+                for group in ("labor_law_evidence", "company_policy_evidence"):
+                    self.assertEqual(prompts[0][group], prompts[1][group])
+
+    def test_invalid_model_json_is_repaired_once_with_original_evidence(self):
+        with patch.object(chat.rag, "retrieve", return_value=evidence()), \
+             patch.object(chat, "get_client") as get_client:
+            get_client.return_value.ask.side_effect = ["invalid json", model_answer()]
+            with self.assertLogs(chat.logger, level="WARNING"):
+                response = self.http.post("/chat", json=self.payload)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(get_client.return_value.ask.call_count, 2)
+            repaired = json.loads(get_client.return_value.ask.call_args.args[1])
+            self.assertEqual(repaired["labor_law_evidence"], evidence()["sources"])
+
+    def test_invalid_review_keeps_first_valid_response_without_fake_citations(self):
+        combined = evidence()
+        combined["sources"].append({
+            "ref": "P1", "kind": "policy", "article": "leave.txt", "text": "Policy text",
+            "location_kind": "line", "location_start": 1, "location_end": 1,
+        })
+        with patch.object(chat.rag, "retrieve", return_value=combined), \
+             patch.object(chat, "get_client") as get_client:
+            get_client.return_value.ask.side_effect = [model_answer(), model_answer(evidence_refs=["L999"])]
+            with self.assertLogs(chat.logger, level="WARNING"):
+                result = self.http.post("/chat", json=self.payload)
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual([a["source"] for a in result.json()["articles"]], ["law"])
+            self.assertEqual(get_client.return_value.ask.call_count, 2)
+
     def test_conflict_requires_both_law_and_policy_and_uses_original_quotes(self):
         combined = evidence()
         combined["sources"].append({

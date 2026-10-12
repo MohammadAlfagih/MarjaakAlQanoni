@@ -4,7 +4,7 @@ import { useApp } from "../context/AppContext";
 import { getCompanies } from "../api/client";
 import { BriefcaseIcon, UserIcon } from "../components/Icons";
 
-// Demo login: no password. Picks a role and a company (company_id isolates policies).
+// Demo login: a company is optional; selecting one adds its policies to legal chat.
 export default function Login() {
   const { t, login } = useApp();
   const navigate = useNavigate();
@@ -40,8 +40,9 @@ export default function Login() {
 
   function submit(e) {
     e.preventDefault();
-    const company = companies.find((c) => c.id === companyId);
-    login({ role, company_id: company.id, company_name: company.name, name: name.trim() });
+    const company = companies?.find((c) => c.id === companyId);
+    if (companyId && !company) return;
+    login({ role, company_id: company?.id ?? null, company_name: company?.name ?? null, name: name.trim() });
     navigate("/chat");
   }
 
@@ -70,10 +71,11 @@ export default function Login() {
 
         <div className="field">
           <label htmlFor="company">{t.companyLabel}</label>
-          <select id="company" className="select" value={companyId} onChange={(e) => setCompanyId(e.target.value)} disabled={!companies?.length}>
-            <option value="">{companies === null ? t.loading : t.companyPlaceholder}</option>
+          <select id="company" className="select" value={companyId} onChange={(e) => setCompanyId(e.target.value)} disabled={companies === null}>
+            <option value="">{t.noCompany}</option>
             {companies?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
+          {companies === null && <span role="status">{t.loading}</span>}
         </div>
 
         <div className="field">
@@ -83,7 +85,7 @@ export default function Login() {
 
         {error && <p className="error">{error}</p>}
 
-        <button className="btn btn-lg" style={{ width: "100%" }} disabled={!companyId}>
+        <button className="btn btn-lg" style={{ width: "100%" }} disabled={!!companyId && !companies?.some((c) => c.id === companyId)}>
           {t.continue}
         </button>
       </form>

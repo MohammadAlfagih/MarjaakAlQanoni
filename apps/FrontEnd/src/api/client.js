@@ -33,7 +33,7 @@ export function getCompanies() {
 
 /**
  * POST /chat
- * body: { question, role, company_id, lang, history: [{ role: "user"|"assistant", content }] }
+ * body: { question, role, company_id (nullable), lang, history: [{ role: "user"|"assistant", content }] }
  * → ChatResponse (see README)
  */
 export function sendQuestion({ question, role, company_id, lang, history }) {
@@ -56,7 +56,7 @@ export function sendVoice({ audio, role, company_id, lang, history }) {
   const ext = audio.type.includes("mp4") ? "m4a" : audio.type.includes("ogg") ? "ogg" : "webm";
   form.append("audio", audio, `question.${ext}`);
   form.append("role", role);
-  form.append("company_id", company_id);
+  if (company_id) form.append("company_id", company_id);
   form.append("lang", lang);
   form.append("history", JSON.stringify(history));
   return request("/voice", { method: "POST", body: form });

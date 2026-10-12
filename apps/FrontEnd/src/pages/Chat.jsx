@@ -39,7 +39,7 @@ export default function Chat() {
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }, [text]);
 
-  const base = () => ({ role: session.role, company_id: session.company_id, lang, history: toHistory(messages) });
+  const base = () => ({ role: session.role, company_id: session.company_id || null, lang, history: toHistory(messages) });
 
   async function submitText(question) {
     const q = question.trim();
@@ -207,7 +207,7 @@ export default function Chat() {
             )}
           </div>
           <div className="composer-meta">
-            <span>{t.asRole} {session.role === "hr" ? t.roleHr : t.roleEmployee} · {session.company_name}</span>
+            <span>{t.asRole} {session.role === "hr" ? t.roleHr : t.roleEmployee} · {session.company_name || t.lawOnly}</span>
             {messages.length > 0 && (
               <button className="chip-btn" onClick={newChat}><PlusIcon />{t.newChat}</button>
             )}
