@@ -1,13 +1,14 @@
 """Exercise real parsing, SQLite persistence and in-memory company isolation."""
 
 import io
+import json
 import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from zipfile import ZipFile
 
 import pymupdf
@@ -16,6 +17,7 @@ from fastapi.testclient import TestClient
 from langchain_core.embeddings import Embeddings
 
 from apps.api.app.app import app
+from apps.api.services.llm import chat
 from apps.api.services.policies import router as routes, service
 
 
@@ -130,6 +132,62 @@ class PolicyLifecycleTests(unittest.TestCase):
         calls = self.embeddings.document_calls
         self.assertEqual(self.policies.search("c_103", "leave"), [])
         self.assertEqual(self.embeddings.document_calls, calls)
+
+    def test_uploaded_policy_reaches_both_chat_roles_before_and_after_restart(self):
+        """Exercise upload -> company store -> RAG -> prompt, independent of audience."""
+        http = TestClient(app)
+        with patch.object(routes, "get_service", return_value=self.policies):
+            upload = http.post(
+                "/policies", data={"company_id": "c_101"},
+                files={"file": ("leave.txt", b"Company annual leave: 25 paid days.")},
+            )
+        self.assertEqual(upload.status_code, 201)
+
+        # Real policy extraction, SQLite, vector search and RAG evidence formatting.
+        # Stub law storage and generation so this checks routing without downloads.
+        law_store = MagicMock()
+        law_store.get.return_value = {"ids": []}
+        law_store.similarity_search.return_value = []
+        qwen = MagicMock()
+        qwen.ask.return_value = json.dumps({
+            "answer": "Company annual leave is 25 paid days.",
+            "evidence_refs": ["P1"], "next_steps": [],
+            "conflict": False, "status": "answered",
+        })
+        restarted = service.PolicyService(Path(self.directory.name), lambda: self.embeddings)
+        for policies in (self.policies, restarted):
+            with self.subTest(restarted=policies is restarted), \
+                 patch.object(chat, "get_policy_service", return_value=policies), \
+                 patch.object(chat.rag, "check_index", return_value={"chunks": 0}), \
+                 patch.object(chat.rag, "store", return_value=law_store), \
+                 patch.object(chat, "get_client", return_value=qwen):
+                prompts = []
+                responses = []
+                for role in ("hr", "employee"):
+                    response = http.post("/chat", json={
+                        "question": "كم استحق اجازة سنوية في شركتي",
+                        "company_id": "c_101", "role": role, "lang": "ar", "history": [],
+                    })
+                    self.assertEqual(response.status_code, 200, response.text)
+                    responses.append(response.json())
+                    prompt = json.loads(qwen.ask.call_args.args[1])
+                    self.assertNotIn("audience", prompt)
+                    self.assertIn("Company annual leave: 25 paid days.", prompt["retrieved_evidence"])
+                    prompts.append(prompt)
+                self.assertEqual(prompts[0], prompts[1])
+                self.assertEqual(responses[0]["articles"], responses[1]["articles"])
+                self.assertEqual(responses[1]["articles"][0]["source"], "policy")
+
+                calls = qwen.ask.call_count
+                other_company = http.post("/chat", json={
+                    "question": "How many annual leave days?", "company_id": "c_102",
+                    "role": "employee", "lang": "en", "history": [],
+                })
+                self.assertEqual(other_company.status_code, 200)
+                self.assertEqual(other_company.json()["articles"], [])
+                self.assertEqual(qwen.ask.call_count, calls)
+        # Once on upload, once on lazy rebuild; switching roles never re-embeds.
+        self.assertEqual(self.embeddings.document_calls, 2)
 
     def test_restart_rebuilds_only_on_first_company_search(self):
         original = b"Original annual leave policy"
