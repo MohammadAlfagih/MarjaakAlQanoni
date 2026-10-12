@@ -15,7 +15,27 @@ export default function Login() {
   const [name, setName] = useState("");
 
   useEffect(() => {
-    getCompanies().then(setCompanies).catch(() => setError(t.errorGeneric));
+    let cancelled = false;
+
+    setCompanies(null);
+    setError("");
+
+    getCompanies()
+      .then((items) => {
+        if (!Array.isArray(items)) throw new Error("Invalid companies response");
+        if (!cancelled) setCompanies(items);
+      })
+      .catch((requestError) => {
+        console.error("Failed to load companies:", requestError);
+        if (!cancelled) {
+          setCompanies([]);
+          setError(t.errorGeneric);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [t.errorGeneric]);
 
   function submit(e) {
@@ -50,8 +70,8 @@ export default function Login() {
 
         <div className="field">
           <label htmlFor="company">{t.companyLabel}</label>
-          <select id="company" className="select" value={companyId} onChange={(e) => setCompanyId(e.target.value)} disabled={!companies}>
-            <option value="">{companies ? t.companyPlaceholder : t.loading}</option>
+          <select id="company" className="select" value={companyId} onChange={(e) => setCompanyId(e.target.value)} disabled={!companies?.length}>
+            <option value="">{companies === null ? t.loading : t.companyPlaceholder}</option>
             {companies?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
