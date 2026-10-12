@@ -15,6 +15,12 @@ const toHistory = (messages) =>
     m.role === "user" ? { role: "user", content: m.text } : { role: "assistant", content: m.answer, status: m.status }
   );
 
+// Shows the server's reason (e.g. "502: The LLM returned an invalid structured answer").
+function errorText(e, t) {
+  if (!e?.status) return `${t.errorGeneric} (${t.serverUnreachable})`;
+  return `${t.errorGeneric} (${e.status}${e.detail ? ": " + e.detail : ""})`;
+}
+
 export default function Chat() {
   const { t, lang, session } = useApp();
   const [messages, setMessages] = useState([]);
@@ -54,7 +60,7 @@ export default function Chat() {
       setMessages((m) => [...m, { id: newId(), role: "assistant", ...res }]);
     } catch (e) {
       console.error(e);
-      setError(t.errorGeneric);
+      setError(errorText(e, t));
     } finally {
       setBusy(null);
       inputRef.current?.focus();
@@ -79,7 +85,7 @@ export default function Chat() {
     } catch (e) {
       console.error(e);
       setMessages((m) => m.filter((x) => x.id !== userId));
-      setError(t.errorGeneric);
+      setError(errorText(e, t));
     } finally {
       setBusy(null);
     }

@@ -1,4 +1,5 @@
 import { useApp } from "../context/AppContext";
+import { isMock } from "../api/client";
 import { AlertIcon, BlockIcon, QuestionIcon, SpeakerIcon, StopIcon } from "./Icons";
 
 // Renders one assistant reply. `msg` is the API ChatResponse plus an `id`.
@@ -14,7 +15,8 @@ export default function AnswerCard({ msg, playing, onPlay, onStop, canSpeak }) {
 
   const cardCls = ["answer", status === "clarify" && "clarify", conflict && status !== "clarify" && "conflict"]
     .filter(Boolean).join(" ");
-  const showSpeaker = msg.audio_url || canSpeak;
+  // The real API can always speak (POST /tts); no button on the landing demo (no onPlay)
+  const showSpeaker = onPlay && (msg.audio_url || canSpeak || !isMock);
 
   return (
     <article className={cardCls} lang={msg.lang} dir={msg.lang === "ar" ? "rtl" : "ltr"}>

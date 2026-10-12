@@ -10,18 +10,28 @@ const BASE = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/
 
 export const isMock = USE_MOCK;
 
+// ngrok's free tunnel otherwise serves an HTML warning for browser requests.
+const TUNNEL_HEADERS = /^https:\/\/[^/]+\.ngrok(?:-free)?\.(?:app|dev|io)(?:\/|$)/.test(BASE)
+  ? { "ngrok-skip-browser-warning": "1" }
+  : {};
+
 async function request(path, options = {}) {
-  // ngrok's free tunnel otherwise serves an HTML warning for browser requests.
-  const tunnelHeaders = /^https:\/\/[^/]+\.ngrok(?:-free)?\.(?:app|dev|io)(?:\/|$)/.test(BASE)
-    ? { "ngrok-skip-browser-warning": "1" }
-    : {};
   const res = await fetch(BASE + path, {
     ...options,
-    headers: { ...tunnelHeaders, ...options.headers },
+    headers: { ...TUNNEL_HEADERS, ...options.headers },
   });
   if (!res.ok) {
+    // FastAPI errors look like {"detail": "..."}; keep the reason for the UI.
     const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${text}`.trim());
+    let detail = text;
+    try {
+      const d = JSON.parse(text).detail;
+      detail = typeof d === "string" ? d : JSON.stringify(d);
+    } catch { /* not JSON */ }
+    const err = new Error(`${res.status} ${detail}`.trim());
+    err.status = res.status;
+    err.detail = detail.slice(0, 300);
+    throw err;
   }
   return res.status === 204 ? null : res.json();
 }
@@ -62,6 +72,16 @@ export function sendVoice({ audio, role, company_id, lang, history }) {
   return request("/voice", { method: "POST", body: form });
 }
 
+/** POST /tts { text, lang } → { audio_url } (server voice for any answer) */
+export async function speak(text, lang) {
+  if (USE_MOCK) return { audio_url: null };
+  return request("/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, lang }),
+  });
+}
+
 /** GET /policies?company_id= → [{ id, filename, size, uploaded_at }] */
 export function getPolicies(company_id) {
   if (USE_MOCK) return mock.getPolicies(company_id);
@@ -87,4 +107,15 @@ export function deletePolicy(id) {
 export function resolveAudioUrl(url) {
   if (!url) return null;
   return /^(https?:|blob:|data:)/.test(url) ? url : BASE + url;
+}
+
+/**
+ * Downloads the spoken answer and returns a local blob: URL for <audio>.
+ * (An <audio src> on an ngrok link can't send the bypass header and gets HTML.)
+ */
+export async function fetchAudio(url) {
+  const res = await fetch(url, { headers: TUNNEL_HEADERS });
+  const type = res.headers.get("content-type") || "";
+  if (!res.ok || !type.startsWith("audio/")) throw new Error(`audio ${res.status} ${type}`);
+  return URL.createObjectURL(await res.blob());
 }
