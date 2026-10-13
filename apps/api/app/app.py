@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -10,12 +11,25 @@ from apps.api.services.llm.chat import router as chat_router
 from apps.api.services.llm.client import MODEL_NAME, get_client, is_loaded
 from apps.api.services.policies.router import router as policy_router
 from apps.api.services.policies.service import company_catalog
+from apps.api.voice import stt, tts
+from apps.api.voice.router import router as voice_router
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if os.environ.get("LLM_PRELOAD") == "1":
         await run_in_threadpool(get_client)
+        try:
+            await run_in_threadpool(stt.load_model)
+        except Exception as exc:  # voice is optional: keep /chat running without it
+            stt.load_error = f"{type(exc).__name__}: {exc}"[:500]
+            logger.exception("Speech model failed to load; /voice will return 503")
+        try:
+            await run_in_threadpool(tts.load_models)
+        except Exception:  # spoken answers are optional; the browser voice is the fallback
+            logger.exception("MMS-TTS failed to load; answers will use the browser voice")
     yield
 
 
@@ -36,14 +50,19 @@ app.add_middleware(
 app.include_router(rag_router)
 app.include_router(chat_router)
 app.include_router(policy_router)
+app.include_router(voice_router)
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_NAME, "llm_loaded": is_loaded(), "pid": os.getpid()}
+    return {
+        "status": "ok", "model": MODEL_NAME, "llm_loaded": is_loaded(),
+        "stt_loaded": stt.is_loaded(), "stt_error": stt.load_error, "pid": os.getpid(),
+    }
 
 
 @app.get("/companies")
 def companies():
     # Demo company choices match the frontend. This is not authentication.
     return company_catalog()
+

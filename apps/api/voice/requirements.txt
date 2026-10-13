@@ -1,0 +1,9 @@
+# Voice feature — add these to the API's requirements on Colab
+transformers>=5.4.0
+accelerate
+sentencepiece
+protobuf
+python-multipart
+edge-tts
+imageio-ffmpeg
+numpy

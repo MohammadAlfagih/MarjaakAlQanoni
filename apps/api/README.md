@@ -1,4 +1,4 @@
-# Marjaak AlQanoni API — Qwen + RAG
+# Marjaak AlQanoni API — Qwen + RAG + Voice
 
 The same Python backend runs on a local machine or a Colab GPU. No project
 notebooks are required. The frontend keeps its existing JSON requests.
@@ -6,6 +6,9 @@ notebooks are required. The frontend keeps its existing JSON requests.
 ```text
 Frontend POST /chat → retrieve law + selected-company policy evidence → Qwen chat template → generate
 → validate JSON + evidence labels → frontend ChatResponse
+
+Frontend POST /voice → Cohere speech-to-text → the same /chat pipeline → text-to-speech
+→ ChatResponse + transcript + audio_url
 ```
 
 ## Local run
@@ -84,6 +87,17 @@ dependencies = [
 subprocess.check_call([sys.executable, '-m', 'pip', 'install', *dependencies, 'pyngrok'])
 ```
 
+The speech model (`CohereLabs/cohere-transcribe-arabic-07-2026`) is gated. Once,
+with the Hugging Face account whose token you use, accept its terms on
+https://huggingface.co/CohereLabs/cohere-transcribe-arabic-07-2026 and add the
+token to Colab 🔑 Secrets as `HF_TOKEN` (Notebook access on). Then, before starting
+the server, pass it to the server process:
+
+```python
+from google.colab import userdata
+os.environ['HF_TOKEN'] = userdata.get('HF_TOKEN')
+```
+
 Start the API once in a background process so you can open the tunnel in another
 cell. Stop the previous process and wait for it to exit before restarting:
 
@@ -98,7 +112,8 @@ server = subprocess.Popen(
 print('Server PID:', server.pid)
 ```
 
-The first run builds the law index and downloads `Qwen/Qwen2.5-3B-Instruct`.
+The first run builds the law index and downloads `Qwen/Qwen2.5-3B-Instruct` and the
+Cohere speech model; `--preload` loads both before the server accepts requests.
 It can take several minutes. Check the log in another cell:
 
 ```python
@@ -119,7 +134,9 @@ for _ in range(180):
         health = response.json()
         if health.get('pid') != server.pid:
             raise RuntimeError('An older backend is answering on port 8000')
-        if health.get('llm_loaded'):
+        if health.get('stt_error'):
+            print('Voice unavailable (chat still works):', health['stt_error'])
+        if health.get('llm_loaded') and (health.get('stt_loaded') or health.get('stt_error')):
             print('New backend ready:', health)
             break
     except requests.RequestException:
@@ -183,7 +200,16 @@ requests receive JSON rather than an HTML interstitial.
   and all retrieved `sources`, before the model selects citations.
 - Existing `POST /rag/search` remains available for evidence-only retrieval
   with an optional request-local policy PDF.
-- `GET /health`: model ID, in-process loading status, and serving process `pid`.
+- `POST /voice` (multipart): `audio` file plus the `/chat` fields as form fields
+  (`history` as a JSON string). Transcribes with Cohere using `lang` (`ar`/`en`;
+  the model has no language detection), runs the same pipeline as `/chat`, and
+  returns its response plus `transcript` and `audio_url` (`null` if text-to-speech
+  failed; the frontend then uses the browser voice).
+- `POST /tts` `{text, lang}` → `{audio_url}`: speaks any answer (the "Listen" button).
+- `GET /audio/{id}.mp3|wav`: spoken answers, kept for one hour in `apps/api/.data/audio`.
+- `GET /health`: model ID, Qwen and speech-model loading status (`llm_loaded`,
+  `stt_loaded`, `stt_error`), and serving process `pid`. If the speech model fails
+  to load at startup, the API keeps serving `/chat` and `/voice` returns `503`.
 
 Policy files and metadata are persisted in `apps/api/.data/policies.sqlite3` by
 default. Policy vectors are not persisted: each upload is embedded once and added
@@ -205,7 +231,24 @@ and law (`L`) excerpts to Qwen in separate `company_policy_evidence` and
 `labor_law_evidence` fields. A generated conflict is accepted only when
 the model cites at least one retrieved law source and one retrieved policy source.
 The company/role values are demo selections, not authenticated authorization.
-Speech recognition `/voice` remains unimplemented. This is a development/demo server.
+This is a development/demo server.
+
+## Voice
+
+| Part | Model | Notes |
+|---|---|---|
+| Speech → text | Cohere Transcribe Arabic (2B) | GPU; float16 on T4 (~4.5 GB) next to Qwen |
+| Text → speech | `edge-tts` (`ar-SA-HamedNeural`, `en-US-AndrewNeural`), then MMS-TTS | edge-tts is refused (403) on Colab, so the API switches to `facebook/mms-tts-ara` / `mms-tts-eng` (open-source, in-process, CC-BY-NC 4.0) |
+
+Code is in `apps/api/voice/`. Browser audio (webm/mp4) is converted with the
+ffmpeg bundled in `imageio-ffmpeg`, so nothing extra is installed on Windows.
+Optional environment variables: `STT_DTYPE=float32` if transcripts come out empty
+or garbled; `TTS_ENGINE=auto|mms|edge`; `TTS_VOICE_AR` / `TTS_VOICE_EN` for edge-tts voices.
+MMS reads letters only, so numbers are spelled out (`num2words`) and evidence labels
+and diacritics are removed before speaking.
+Errors: `422` unreadable/too-short audio or invalid fields; `503` speech model
+unavailable (check `HF_TOKEN`, the accepted terms and GPU memory); `/chat` errors
+pass through unchanged.
 
 History accepts frontend assistant `status` fields, including `clarify`. Recent
 user messages help retrieval understand follow-ups; the latest eight history

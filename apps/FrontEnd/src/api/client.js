@@ -6,7 +6,11 @@
 import * as mock from "./mock";
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK !== "false";
-const BASE = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
+// Dev server: same-origin /api, forwarded to VITE_API_URL by vite.config.js (works through a tunnel).
+// Production build: call VITE_API_URL directly.
+const BASE = import.meta.env.DEV
+  ? "/api"
+  : (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 export const isMock = USE_MOCK;
 

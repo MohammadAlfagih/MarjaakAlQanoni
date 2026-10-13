@@ -225,4 +225,5 @@ apps/api/services/RAG/.model_cache/
 apps/api/services/llm/.model_cache/
 apps/api/services/llm/.offload/
 apps/api/.data/
+apps/api/voice/.model_cache/
 tmp/
