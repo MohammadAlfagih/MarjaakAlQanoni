@@ -80,13 +80,10 @@ MarjaakAlQanoni/
 │       │   │   └── labor-law.pdf   # Runtime law corpus
 │       │   ├── llm/
 │       │   │   ├── client.py       # Qwen loading and generation
-│       │   │   ├── chat.py         # Prompts, orchestration, validation
-│       │   │   └── clinet.py       # Empty legacy placeholder
+│       │   │   └── chat.py         # Prompts, orchestration, validation
 │       │   └── policies/           # Policy upload, storage, retrieval
 │       └── voice/                  # STT, TTS, audio conversion, routes
 ├── Data/labor-law.pdf               # Matching copy of the law PDF
-├── evaluation/eval.py               # Empty evaluation placeholder
-├── ml/train_lora.py                 # Empty training placeholder
 ├── scripts/package_api.py           # Backend-only ZIP for Colab
 └── tests/                          # unittest integration and retrieval checks
 ```
